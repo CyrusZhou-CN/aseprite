@@ -67,6 +67,7 @@
 #include "os/system.h"
 #include "render/rasterize.h"
 #include "ui/ui.h"
+#include "view/layers.h"
 
 #include <algorithm>
 #include <cmath>
@@ -349,6 +350,9 @@ void Editor::setLayer(const Layer* layer)
   if (gridVisible)
     oldGrid = getSite().grid();
 
+  if (isActive())
+    UIContext::instance()->notifyBeforeActiveSiteChanged();
+
   m_observers.notifyBeforeLayerChanged(this);
 
   // Remove extra cel information if we change between different layer
@@ -395,6 +399,9 @@ void Editor::setFrame(frame_t frame)
   if (m_frame == frame)
     return;
 
+  if (isActive())
+    UIContext::instance()->notifyBeforeActiveSiteChanged();
+
   m_observers.notifyBeforeFrameChanged(this);
   {
     HideBrushPreview hide(m_brushPreview);
@@ -424,8 +431,8 @@ void Editor::getSite(Site* site) const
 
   // TODO we should not access timeline directly here
   Timeline* timeline = App::instance()->timeline();
-  if (timeline && timeline->isVisible() && timeline->range().enabled()) {
-    site->range(timeline->range());
+  if (timeline && timeline->isVisible() && timeline->isRangeEnabled()) {
+    site->range(timeline->realRange());
   }
 
   if (m_layer && m_layer->isTilemap()) {
@@ -649,6 +656,7 @@ void Editor::drawOneSpriteUnclippedRect(ui::Graphics* g,
     // the original cel) before it can be used by the RenderEngine.
     m_document->notifyExposeSpritePixels(m_sprite, gfx::Region(expose));
 
+    m_renderEngine->setComposeGroups(pref.experimental.composeGroups());
     m_renderEngine->setNewBlendMethod(pref.experimental.newBlend());
     m_renderEngine->setRefLayersVisiblity(true);
     m_renderEngine->setSelectedLayer(m_layer);
@@ -718,7 +726,7 @@ void Editor::drawOneSpriteUnclippedRect(ui::Graphics* g,
         rendered->colorSpace() != m_document->osColorSpace()) {
       const int maxw = std::max(rc2.w, rendered ? rendered->width() : 0);
       const int maxh = std::max(rc2.h, rendered ? rendered->height() : 0);
-      rendered = os::instance()->makeRgbaSurface(maxw, maxh, m_document->osColorSpace());
+      rendered = os::System::instance()->makeRgbaSurface(maxw, maxh, m_document->osColorSpace());
     }
 
     m_renderEngine->setProjection(newEngine ? render::Projection() : m_proj);
@@ -926,6 +934,58 @@ void Editor::drawSpriteUnclippedRect(ui::Graphics* g, const gfx::Rect& _rc)
           enclosingRect.w);
       }
     }
+    if (mode & int(app::gen::SymmetryMode::RIGHT_DIAG)) {
+      double y = m_docPref.symmetry.yAxis();
+      double x = m_docPref.symmetry.xAxis();
+      gfx::Color color = color_utils::color_for_ui(m_docPref.grid.color());
+      // Bottom point intersection:
+      gfx::Point bottomLeft(
+        enclosingRect.x + m_proj.applyY(mainTilePosition().x) + int(m_proj.applyX<double>(x)) -
+          (enclosingRect.h - m_proj.applyY(mainTilePosition().y) - int(m_proj.applyY<double>(y))),
+        enclosingRect.y2());
+      if (bottomLeft.x < enclosingRect.x) {
+        // Left intersection
+        bottomLeft.y = enclosingRect.y2() - enclosingRect.x + bottomLeft.x;
+        bottomLeft.x = enclosingRect.x;
+      }
+      // Top intersection
+      gfx::Point topRight(enclosingRect.x + m_proj.applyY(mainTilePosition().x) +
+                            int(m_proj.applyX<double>(x)) + m_proj.applyY(mainTilePosition().y) +
+                            int(m_proj.applyY<double>(y)),
+                          enclosingRect.y);
+      if (enclosingRect.x2() < topRight.x) {
+        // Right intersection
+        topRight.y = enclosingRect.y + topRight.x - enclosingRect.x2();
+        topRight.x = enclosingRect.x2();
+      }
+      g->drawLine(color, bottomLeft, topRight);
+    }
+    if (mode & int(app::gen::SymmetryMode::LEFT_DIAG)) {
+      double y = m_docPref.symmetry.yAxis();
+      double x = m_docPref.symmetry.xAxis();
+      gfx::Color color = color_utils::color_for_ui(m_docPref.grid.color());
+      // Bottom point intersection:
+      gfx::Point bottomRight(
+        enclosingRect.x + m_proj.applyY(mainTilePosition().x) + int(m_proj.applyX<double>(x)) +
+          (enclosingRect.h - m_proj.applyY(mainTilePosition().y) - int(m_proj.applyX<double>(y))),
+        enclosingRect.y2());
+      if (enclosingRect.x2() < bottomRight.x) {
+        // Left intersection
+        bottomRight.y = enclosingRect.y2() - bottomRight.x + enclosingRect.x2();
+        bottomRight.x = enclosingRect.x2();
+      }
+      // Top intersection
+      gfx::Point topLeft(enclosingRect.x + m_proj.applyY(mainTilePosition().x) +
+                           int(m_proj.applyX<double>(x)) - m_proj.applyY(mainTilePosition().y) -
+                           int(m_proj.applyY<double>(y)),
+                         enclosingRect.y);
+      if (topLeft.x < enclosingRect.x) {
+        // Right intersection
+        topLeft.y = enclosingRect.y + enclosingRect.x - topLeft.x;
+        topLeft.x = enclosingRect.x;
+      }
+      g->drawLine(color, topLeft, bottomRight);
+    }
   }
 
   // Draw active layer/cel edges
@@ -967,12 +1027,14 @@ void Editor::drawSpriteClipped(const gfx::Region& updateRegion)
   Region screenRegion;
   getDrawableRegion(screenRegion, kCutTopWindows);
 
-  ScreenGraphics screenGraphics(display());
+  Display* display = this->display();
+  // TODO clip the editorGraphics directly
+  Graphics backGraphics(display, display->backLayer()->surface(), 0, 0);
   GraphicsPtr editorGraphics = getGraphics(clientBounds());
 
   for (const Rect& updateRect : updateRegion) {
     for (const Rect& screenRect : screenRegion) {
-      IntersectClip clip(&screenGraphics, screenRect);
+      IntersectClip clip(&backGraphics, screenRect);
       if (clip)
         drawSpriteUnclippedRect(editorGraphics.get(), updateRect);
     }
@@ -1174,11 +1236,12 @@ void Editor::drawTileNumbers(ui::Graphics* g, const Cel* cel)
   gfx::Color color = color_utils::color_for_ui(Preferences::instance().guides.autoGuidesColor());
   gfx::Color fgColor = color_utils::blackandwhite_neg(color);
 
+  const text::FontRef& font = g->font();
   const doc::Grid grid = getSite().grid();
   const gfx::Size tileSize = editorToScreen(grid.tileToCanvas(gfx::Rect(0, 0, 1, 1))).size();
-  const int th = g->font()->height();
+  const int th = font->lineHeight();
   if (tileSize.h > th) {
-    const gfx::Point offset = gfx::Point(tileSize.w / 2, tileSize.h / 2 - g->font()->height() / 2) +
+    const gfx::Point offset = gfx::Point(tileSize.w / 2, tileSize.h / 2 - font->size() / 2) +
                               mainTilePosition();
 
     int ti_offset = static_cast<LayerTilemap*>(cel->layer())->tileset()->baseIndex() - 1;
@@ -1199,14 +1262,14 @@ void Editor::drawTileNumbers(ui::Graphics* g, const Cel* cel)
           text = fmt::format("{}", ti + ti_offset);
 
           gfx::Point pt2(pt);
-          pt2.x -= g->measureUIText(text).w / 2;
+          pt2.x -= font->textLength(text) / 2;
           g->drawText(text, fgColor, color, pt2);
 
           if (tf && tileSize.h > 2 * th) {
             text.clear();
             build_tile_flags_string(tf, text);
 
-            const gfx::Size tsize = g->measureUIText(text);
+            const gfx::Size tsize = g->measureText(text);
             pt.x -= tsize.w / 2;
             pt.y += tsize.h;
             g->drawText(text, fgColor, color, pt);
@@ -1365,7 +1428,7 @@ void Editor::drawCelHGuide(ui::Graphics* g,
   }
 
   auto text = fmt::format("{}px", ABS(sprX2 - sprX1));
-  const int textW = Graphics::measureUITextLength(text, font());
+  const int textW = font()->textLength(text);
   g->drawText(text,
               color_utils::blackandwhite_neg(color),
               color,
@@ -1856,6 +1919,9 @@ bool Editor::isSliceSelected(const doc::Slice* slice) const
 void Editor::clearSlicesSelection()
 {
   if (!m_selectedSlices.empty()) {
+    if (isActive())
+      UIContext::instance()->notifyBeforeActiveSiteChanged();
+
     m_selectedSlices.clear();
     invalidate();
 
@@ -1867,6 +1933,9 @@ void Editor::clearSlicesSelection()
 void Editor::selectSlice(const doc::Slice* slice)
 {
   ASSERT(slice);
+  if (isActive())
+    UIContext::instance()->notifyBeforeActiveSiteChanged();
+
   m_selectedSlices.insert(slice->id());
   invalidate();
 
@@ -1876,6 +1945,9 @@ void Editor::selectSlice(const doc::Slice* slice)
 
 bool Editor::selectSliceBox(const gfx::Rect& box)
 {
+  if (isActive())
+    UIContext::instance()->notifyBeforeActiveSiteChanged();
+
   m_selectedSlices.clear();
   for (auto slice : m_sprite->slices()) {
     auto key = slice->getByFrame(m_frame);
@@ -1892,6 +1964,9 @@ bool Editor::selectSliceBox(const gfx::Rect& box)
 
 void Editor::selectAllSlices()
 {
+  if (isActive())
+    UIContext::instance()->notifyBeforeActiveSiteChanged();
+
   for (auto slice : m_sprite->slices())
     m_selectedSlices.insert(slice->id());
   invalidate();
@@ -1953,8 +2028,6 @@ bool Editor::onProcessMessage(Message* msg)
     }
 
     case kMouseEnterMessage:
-      m_brushPreview.hide();
-
       // Do not update tool loop modifiers when the mouse exits and/re-enters
       // the editor area while we are inside the same tool loop (hasCapture()).
       // E.g. This avoids starting to rotate a rectangular marquee (Alt key
@@ -1967,7 +2040,9 @@ bool Editor::onProcessMessage(Message* msg)
       break;
 
     case kMouseLeaveMessage:
-      m_brushPreview.hide();
+      if (!hasCapture())
+        m_brushPreview.hide();
+
       StatusBar::instance()->showDefaultText();
 
       // Hide autoguides
@@ -2024,7 +2099,7 @@ bool Editor::onProcessMessage(Message* msg)
         updateToolByTipProximity(mouseMsg->pointerType());
         updateAutoCelGuides(msg);
 
-        return m_state->onMouseMove(this, static_cast<MouseMessage*>(msg));
+        return m_state->onMouseMove(this, mouseMsg);
       }
       break;
 
@@ -2044,6 +2119,14 @@ bool Editor::onProcessMessage(Message* msg)
           updateToolLoopModifiersIndicators();
           updateQuicktool();
           setCursor(mouseMsg->position());
+
+          // In case we didn't hide the BrushPreview on the
+          // kMouseLeaveMessage message (because we had the mouse
+          // captured), we can hide the BrushPreview now if the mouse
+          // is outside the widget.
+          if (!hasMouse()) {
+            m_brushPreview.hide();
+          }
         }
 
         if (result)
@@ -2229,6 +2312,9 @@ void Editor::onResize(ui::ResizeEvent& ev)
 {
   Widget::onResize(ev);
   m_padding = calcExtraPadding(m_proj);
+
+  if (m_state)
+    m_state->onEditorResize(this);
 }
 
 void Editor::onPaint(ui::PaintEvent& ev)
@@ -2284,7 +2370,7 @@ void Editor::onPaint(ui::PaintEvent& ev)
                     vp.origin() - bounds().origin());
 
         m_perfInfoBounds.setOrigin(vp.origin());
-        m_perfInfoBounds.setSize(g->measureUIText(buf));
+        m_perfInfoBounds.setSize(g->measureText(buf));
       }
 #endif // ENABLE_DEVMODE
 
@@ -2405,7 +2491,7 @@ void Editor::onBeforeRemoveLayer(DocEvent& ev)
 
   // If the layer that was removed is the selected one in the editor,
   // or is an ancestor of the selected one.
-  Layer* layerToSelect = candidate_if_layer_is_deleted(layer(), ev.layer());
+  Layer* layerToSelect = view::candidate_if_layer_is_deleted(layer(), ev.layer());
   if (layer() != layerToSelect)
     setLayer(layerToSelect);
 
@@ -2453,8 +2539,6 @@ void Editor::onBeforeLayerEditableChange(DocEvent& ev, bool newState)
 void Editor::setCursor(const gfx::Point& mouseDisplayPos)
 {
   Rect vp = View::getView(this)->viewportBounds();
-  if (!vp.contains(mouseDisplayPos))
-    return;
 
   bool used = false;
   if (m_sprite)

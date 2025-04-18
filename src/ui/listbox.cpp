@@ -1,5 +1,5 @@
 // Aseprite UI Library
-// Copyright (C) 2019-2022  Igara Studio S.A.
+// Copyright (C) 2019-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -259,23 +259,12 @@ bool ListBox::onProcessMessage(Message* msg)
       return true;
 
     case kMouseWheelMessage: {
-      View* view = View::getView(this);
-      if (view) {
-        auto mouseMsg = static_cast<MouseMessage*>(msg);
-        gfx::Point scroll = view->viewScroll();
-
-        if (mouseMsg->preciseWheel())
-          scroll += mouseMsg->wheelDelta();
-        else
-          scroll += mouseMsg->wheelDelta() * textHeight() * 3;
-
-        view->setViewScroll(scroll);
-      }
+      View::scrollByMessage(this, msg);
       break;
     }
 
     case kKeyDownMessage:
-      if (hasFocus() && !children().empty()) {
+      if (onAcceptKeyInput() && !children().empty()) {
         int select = getSelectedIndex();
         int bottom = std::max(0, int(children().size() - 1));
         View* view = View::getView(this);
@@ -401,6 +390,11 @@ void ListBox::onChange()
 void ListBox::onDoubleClickItem()
 {
   DoubleClickItem();
+}
+
+bool ListBox::onAcceptKeyInput()
+{
+  return hasFocus();
 }
 
 int ListBox::advanceIndexThroughVisibleItems(int startIndex, int delta, const bool loop)

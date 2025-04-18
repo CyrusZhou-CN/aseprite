@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2020-2024  Igara Studio S.A.
+// Copyright (C) 2020-2025  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -67,7 +67,7 @@ void ResourceListItem::onPaint(PaintEvent& ev)
               fgcolor,
               gfx::ColorNone,
               gfx::Point(bounds.x + 2 * guiscale(),
-                         bounds.y + bounds.h / 2 - g->measureUIText(text()).h / 2));
+                         guiscaled_center(bounds.y, bounds.h, g->font()->lineHeight())));
 }
 
 void ResourceListItem::onSizeHint(SizeHintEvent& ev)

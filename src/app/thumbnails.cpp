@@ -45,8 +45,9 @@ os::SurfaceRef get_cel_thumbnail(const doc::Cel* cel, const gfx::Size& fitInSize
                    255,
                    doc::BlendMode::NORMAL);
 
-  if (os::SurfaceRef thumbnail = os::instance()->makeRgbaSurface(thumbnailImage->width(),
-                                                                 thumbnailImage->height())) {
+  if (os::SurfaceRef thumbnail = os::System::instance()->makeRgbaSurface(
+        thumbnailImage->width(),
+        thumbnailImage->height())) {
     convert_image_to_surface(thumbnailImage.get(),
                              palette,
                              thumbnail.get(),
