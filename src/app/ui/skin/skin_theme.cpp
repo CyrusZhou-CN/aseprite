@@ -42,6 +42,7 @@
 #include "text/font.h"
 #include "text/font_metrics.h"
 #include "text/font_style_set.h"
+#include "text/text_blob.h"
 #include "ui/intern.h"
 #include "ui/ui.h"
 
@@ -257,6 +258,9 @@ static FontData* load_font(const XMLElement* xmlFont, const std::string& xmlFile
     if (xmlFont->Attribute("antialias"))
       antialias = bool_attr(xmlFont, "antialias", false);
 
+    text::FontHinting hinting = (bool_attr(xmlFont, "hinting", true) ? text::FontHinting::Normal :
+                                                                       text::FontHinting::None);
+
     std::string fontFilename;
     if (platformFileStr)
       fontFilename = app::find_font(xmlDir, platformFileStr);
@@ -270,6 +274,7 @@ static FontData* load_font(const XMLElement* xmlFont, const std::string& xmlFile
     font->setName(nameStr ? nameStr : (platformFileStr ? platformFileStr : fileStr));
     font->setFilename(fontFilename);
     font->setAntialias(antialias);
+    font->setHinting(hinting);
 
     if (!fontFilename.empty())
       LOG(VERBOSE, "THEME: Font file '%s' found\n", fontFilename.c_str());
@@ -311,6 +316,9 @@ static FontData* load_font(const XMLElement* xmlFont, const std::string& xmlFile
     if (!font && systemStr) {
       font = try_to_load_system_font(xmlFont);
     }
+
+    if (font && nameStr)
+      font->setName(nameStr);
   }
   else {
     throw base::Exception(
@@ -1440,15 +1448,12 @@ void SkinTheme::drawEntryText(ui::Graphics* g, ui::Entry* widget)
 
     IntersectClip clip(g, bounds);
     if (clip) {
-      text::FontMetrics metrics;
-      widget->font()->metrics(&metrics);
-      const float baselineShift = -metrics.ascent - widget->textBlob()->baseline();
-
-      g->drawTextWithDelegate(std::string(pos, textString.end()), // TODO use a string_view()
-                              colors.text(),
-                              ColorNone,
-                              gfx::Point(bounds.x, bounds.y + baselineShift),
-                              &delegate);
+      g->drawTextWithDelegate(
+        std::string(pos, textString.end()), // TODO use a string_view()
+        colors.text(),
+        ColorNone,
+        gfx::Point(bounds.x, widget->textBaseline() - widget->textBlob()->baseline()),
+        &delegate);
     }
   }
 
