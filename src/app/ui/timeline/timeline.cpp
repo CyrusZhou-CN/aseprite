@@ -2526,7 +2526,7 @@ void Timeline::drawCel(ui::Graphics* g,
 
     if (!thumb_bounds.isEmpty()) {
       if (os::SurfaceRef surface =
-            thumb::get_cel_thumbnail(cel, m_scaleUpToFit, thumb_bounds.size())) {
+            thumb::get_cel_thumbnail(g->display(), cel, m_scaleUpToFit, thumb_bounds.size())) {
         const int t = std::clamp(thumb_bounds.w / 8, 4, 16);
         draw_checkered_grid(g, thumb_bounds, gfx::Size(t, t), docPref());
 
@@ -2618,7 +2618,8 @@ void Timeline::drawCelOverlay(ui::Graphics* g)
     return;
 
   gfx::Rect rc = m_sprite->bounds().fitIn(gfx::Rect(m_thumbnailsOverlayBounds).shrink(1));
-  if (os::SurfaceRef surface = thumb::get_cel_thumbnail(cel, m_scaleUpToFit, rc.size())) {
+  if (os::SurfaceRef surface =
+        thumb::get_cel_thumbnail(g->display(), cel, m_scaleUpToFit, rc.size())) {
     draw_checkered_grid(g, rc, gfx::Size(8, 8) * ui::guiscale(), docPref());
 
     g->drawRgbaSurface(surface.get(),
@@ -4321,6 +4322,12 @@ void Timeline::clearAndInvalidateRange()
   }
 }
 
+void Timeline::refresh()
+{
+  regenerateRows();
+  invalidate();
+}
+
 app::gen::GlobalPref::Timeline& Timeline::timelinePref() const
 {
   return Preferences::instance().timeline;
@@ -4545,7 +4552,7 @@ void Timeline::onDrag(ui::DragEvent& e)
   m_range.clearRange();
   setHot(hitTest(nullptr, e.position()));
   switch (m_hot.part) {
-    case PART_NOTHING:             invalidate();
+    case PART_NOTHING:             invalidate(); [[fallthrough]];
     case PART_ROW:
     case PART_ROW_EYE_ICON:
     case PART_ROW_CONTINUOUS_ICON:
@@ -4576,7 +4583,7 @@ void Timeline::onDrop(ui::DragEvent& e)
 
   // Determine at which frame and layer the content was dropped on.
   frame_t frame = m_frame;
-  layer_t layerIndex = getLayerIndex(m_layer);
+  layer_t layerIndex = m_sprite->root()->getLayerIndex(m_layer);
   InsertionPoint insert = InsertionPoint::BeforeLayer;
   DroppedOn droppedOn = DroppedOn::Unspecified;
   TRACE("m_dropRange.type() %d\n", m_dropRange.type());
@@ -4602,7 +4609,7 @@ void Timeline::onDrop(ui::DragEvent& e)
       break;
     case Range::kLayers:
       droppedOn = DroppedOn::Layer;
-      if (m_dropTarget.vhit != DropTarget::VeryBottom) {
+      if (m_dropTarget.vhit != DropTarget::VeryBottom && !m_dropRange.selectedLayers().empty()) {
         auto* selectedLayer = *m_dropRange.selectedLayers().begin();
         layerIndex = getLayerIndex(selectedLayer);
       }
@@ -4624,13 +4631,13 @@ void Timeline::onDrop(ui::DragEvent& e)
       std::string txmsg;
       std::unique_ptr<docapi::DocProvider> docProvider = nullptr;
       if (droppedImage) {
-        txmsg = "Dropped image on timeline";
+        txmsg = "Drop Image";
         doc::ImageRef image = nullptr;
         convert_surface_to_image(surface.get(), 0, 0, surface->width(), surface->height(), image);
         docProvider = std::make_unique<DocProviderFromImage>(image);
       }
       else {
-        txmsg = "Dropped paths on timeline";
+        txmsg = "Drop File";
         docProvider = std::make_unique<DocProviderFromPaths>(m_document->context(), paths);
       }
 

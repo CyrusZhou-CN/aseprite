@@ -544,8 +544,7 @@ void SkinTheme::loadXml(BackwardCompatibility* backward)
         float size = 0.0f;
         if (const char* sizeStr = xmlFont->Attribute("size"))
           size = std::strtof(sizeStr, nullptr);
-
-        if (fontData->defaultSize() != 0.0f)
+        if (size == 0.0f && fontData->defaultSize() != 0.0f)
           size = fontData->defaultSize();
 
         const char* mnemonicsStr = xmlFont->Attribute("mnemonics");
@@ -560,9 +559,16 @@ void SkinTheme::loadXml(BackwardCompatibility* backward)
           continue;
         }
 
-        // SpriteSheetFonts have a default preferred size.
-        if (size == 0.0f && font->defaultSize() > 0.0f) {
-          size = font->defaultSize();
+        if (size == 0.0f) {
+          // SpriteSheetFonts have a default preferred size.
+          if (font->defaultSize() > 0.0f) {
+            size = font->defaultSize();
+          }
+          // For some user extensions, we need to specify at least a
+          // default size of 10 for TTF theme fonts.
+          else {
+            size = 10.0f;
+          }
           font = fontData->getFont(m_fontMgr, size * ui::guiscale());
         }
 
@@ -1344,6 +1350,7 @@ public:
     , m_h(h)
   {
     m_widget->getEntryThemeInfo(&m_index, &m_caret, &m_state, &m_range);
+    m_suffixIndex = m_widget->text().size();
   }
 
   int index() const { return m_index; }
@@ -1362,6 +1369,11 @@ public:
     auto& colors = theme->colors;
     bg = ColorNone;
     fg = colors.text();
+
+    // Suffix text
+    if (m_index >= m_suffixIndex) {
+      fg = colors.entrySuffix();
+    }
 
     // Selected
     if ((m_index >= m_range.from) && (m_index < m_range.to)) {
@@ -1427,6 +1439,7 @@ private:
   int m_lastX; // Last position used to fill the background
   int m_y, m_h;
   int m_charStartX;
+  int m_suffixIndex;
 };
 
 } // anonymous namespace
@@ -1439,8 +1452,10 @@ void SkinTheme::drawEntryText(ui::Graphics* g, ui::Entry* widget)
   DrawEntryTextDelegate delegate(widget, g, bounds.origin(), widget->textHeight());
   int scroll = delegate.index();
 
-  if (!widget->text().empty()) {
-    const std::string& textString = widget->text();
+  // Full text to paint: widget text + suffix
+  const std::string textString = widget->text() + widget->getSuffix();
+
+  if (!textString.empty()) {
     base::utf8_decode dec(textString);
     auto pos = dec.pos();
     for (int i = 0; i < scroll && dec.next(); ++i)
@@ -1448,38 +1463,28 @@ void SkinTheme::drawEntryText(ui::Graphics* g, ui::Entry* widget)
 
     IntersectClip clip(g, bounds);
     if (clip) {
-      g->drawTextWithDelegate(
-        std::string(pos, textString.end()), // TODO use a string_view()
-        colors.text(),
-        ColorNone,
-        gfx::Point(bounds.x, widget->textBaseline() - widget->textBlob()->baseline()),
-        &delegate);
-    }
-  }
+      int baselineAdjustment = widget->textBaseline();
+      if (auto blob = widget->textBlob()) {
+        baselineAdjustment -= blob->baseline();
+      }
+      else {
+        text::FontMetrics metrics;
+        widget->font()->metrics(&metrics);
+        baselineAdjustment += metrics.ascent;
+      }
 
-  bounds.x += delegate.textBounds().w;
-
-  // Draw suffix if there is enough space
-  if (!widget->getSuffix().empty()) {
-    Rect sufBounds(bounds.x,
-                   bounds.y,
-                   bounds.x2() - widget->childSpacing() - bounds.x,
-                   widget->textHeight());
-    IntersectClip clip(g, sufBounds & widget->clientChildrenBounds());
-    if (clip) {
-      drawText(g,
-               widget->getSuffix().c_str(),
-               colors.entrySuffix(),
-               ColorNone,
-               widget,
-               sufBounds,
-               widget->align(),
-               0);
+      g->drawTextWithDelegate(std::string(pos, textString.end()), // TODO use a string_view()
+                              colors.text(),
+                              ColorNone,
+                              gfx::Point(bounds.x, baselineAdjustment),
+                              &delegate);
     }
   }
 
   // Draw caret at the end of the text
   if (!delegate.caretDrawn()) {
+    bounds.x += delegate.textBounds().w;
+
     gfx::Rect charBounds(bounds.x + widget->bounds().x,
                          bounds.y + widget->bounds().y,
                          0,
