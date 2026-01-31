@@ -412,7 +412,7 @@ private:
             m_addButton->setStyle(theme->styles.miniButton());
             addChild(m_addButton.get());
 
-            itemBounds.w = 8 * guiscale() + font()->textLength("Add");
+            itemBounds.w = 8 * guiscale() + font()->textLength(Strings::keyboard_shortcuts_add());
             itemBounds.x -= itemBounds.w + 2 * guiscale();
 
             m_addButton->setBgColor(gfx::ColorNone);
@@ -638,7 +638,19 @@ private:
       for (auto item : listBox->children()) {
         if (KeyItem* keyItem = dynamic_cast<KeyItem*>(item)) {
           std::string itemText = keyItem->searchableText();
-          if (!match(itemText))
+          bool matches = match(itemText);
+
+          if (!matches && keyItem->key()) {
+            for (const AppShortcut& sc : keyItem->key()->shortcuts()) {
+              std::string shortcutText = base::string_to_lower(sc.toString());
+              if (shortcutText.find(base::string_to_lower(search)) != std::string::npos) {
+                matches = true;
+                break;
+              }
+            }
+          }
+
+          if (!matches)
             continue;
 
           if (!group) {
